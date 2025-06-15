@@ -5,6 +5,8 @@ export type Terminal = InstanceType<typeof pkg.Terminal>;
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input';
 
+export type CommandType = 'claude' | 'codex';
+
 export interface Worktree {
 	path: string;
 	branch: string;
@@ -23,11 +25,12 @@ export interface Session {
 	isActive: boolean;
 	terminal: Terminal; // Virtual terminal for state detection (xterm Terminal instance)
 	stateCheckInterval?: NodeJS.Timeout; // Interval for checking terminal state
+	commandType: CommandType; // Type of command being executed (claude or codex)
 }
 
 export interface SessionManager {
 	sessions: Map<string, Session>;
-	createSession(worktreePath: string): Session;
+	createSession(worktreePath: string, commandType: CommandType): Session;
 	getSession(worktreePath: string): Session | undefined;
 	destroySession(worktreePath: string): void;
 	getAllSessions(): Session[];

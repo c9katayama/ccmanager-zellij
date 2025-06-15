@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # CCManager - Claude Code Worktree Manager
 
 ## Overview
@@ -89,7 +93,8 @@ npm run typecheck
 
 ### Session Management
 
-- Each worktree maintains its own Claude Code process
+- Each worktree maintains its own AI assistant process (Claude Code or Codex)
+- Command selection UI allows choosing between different AI assistants per session
 - Sessions are managed via `node-pty` for full terminal emulation
 - Process lifecycle tracked in React state with automatic cleanup
 - Session states tracked with sophisticated prompt detection
@@ -97,7 +102,8 @@ npm run typecheck
 ### UI Components
 
 - **App Component**: Main application container with view routing
-- **Menu Component**: Worktree list with status indicators and actions
+- **Menu Component**: Worktree list with status indicators, command type indicators, and actions
+- **CommandSelection Component**: UI for choosing between Claude Code and Codex
 - **Session Component**: Full PTY rendering with ANSI color support
 - **Worktree Management**: Create, delete, and merge worktrees via dedicated forms
 - **Shortcut Configuration**: Customizable keyboard shortcuts with visual editor
@@ -110,6 +116,14 @@ Claude Code states are detected by advanced output analysis in `promptDetector.t
 - **Busy**: Detects "ESC to interrupt" and active processing
 - **Task complete**: Identifies when Claude is ready for new input
 - **Bottom border tracking**: Handles prompt box UI elements
+
+### Command Selection
+
+- Session-level command selection between Claude Code and Codex
+- CommandSelection component provides intuitive UI for choosing AI assistant
+- Command type stored in Session interface and remembered for session lifetime
+- Environment variables support: `CCMANAGER_CLAUDE_ARGS` and `CCMANAGER_CODEX_ARGS`
+- Visual indicators in menu show active command types (🤖 for Claude, ⚡ for Codex)
 
 ### Keyboard Shortcuts
 
@@ -194,6 +208,24 @@ await worktreeService.deleteWorktree(worktreePath, { force: true });
 
 // Merge worktree branch
 await worktreeService.mergeWorktree(worktreePath, targetBranch);
+```
+
+### Command Selection Usage
+
+```typescript
+// Create session with specific command type
+const session = sessionManager.createSession(worktreePath, 'claude');
+const codexSession = sessionManager.createSession(worktreePath, 'codex');
+
+// Check command type of existing session
+const existingSession = sessionManager.getSession(worktreePath);
+if (existingSession?.commandType === 'codex') {
+  // Handle Codex-specific logic
+}
+
+// Environment variable usage
+process.env.CCMANAGER_CLAUDE_ARGS = '--resume --verbose';
+process.env.CCMANAGER_CODEX_ARGS = '--temperature 0.2 --max-tokens 1000';
 ```
 
 ## Common Issues

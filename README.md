@@ -6,7 +6,8 @@ https://github.com/user-attachments/assets/a6d80e73-dc06-4ef8-849d-e3857f6c7024
 
 ## Features
 
-- Run multiple Claude Code sessions in parallel across different Git worktrees
+- Run multiple AI coding sessions in parallel across different Git worktrees
+- **Command Selection**: Choose between Claude Code and Codex for each session
 - Switch between sessions seamlessly
 - Visual status indicators for session states (busy, waiting, idle)
 - Create, merge, and delete worktrees from within the app
@@ -64,7 +65,33 @@ npx ccmanager
 CCMANAGER_CLAUDE_ARGS="--resume" npx ccmanager
 ```
 
-The arguments are applied to all Claude Code sessions started by CCManager.
+### CCMANAGER_CODEX_ARGS
+
+Similarly, you can pass additional arguments to Codex sessions:
+
+```bash
+# Start Codex with specific arguments for all sessions
+export CCMANAGER_CODEX_ARGS="--temperature 0.2"
+npx ccmanager
+
+# Or set it inline
+CCMANAGER_CODEX_ARGS="--temperature 0.2" npx ccmanager
+```
+
+The arguments are applied to all sessions of the respective type started by CCManager.
+
+## Command Selection
+
+When creating a new session, CCManager now allows you to choose between different AI coding assistants:
+
+- **🤖 Claude Code**: Advanced AI coding assistant with comprehensive understanding
+- **⚡ Codex**: Fast AI code completion and generation
+
+The command selection interface appears when you select a worktree that doesn't have an active session. Once a session is created with a specific command, that choice is remembered for the session's lifetime.
+
+In the main menu, active sessions display indicators to show which command they're using:
+- **🤖**: Claude Code session
+- **⚡**: Codex session
 
 ## Keyboard Shortcuts
 

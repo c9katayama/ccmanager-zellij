@@ -3,6 +3,7 @@ import {
 	Session,
 	SessionManager as ISessionManager,
 	SessionState,
+	CommandType,
 } from '../types/index.js';
 import {EventEmitter} from 'events';
 import pkg from '@xterm/headless';
@@ -74,7 +75,10 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 		this.sessions = new Map();
 	}
 
-	createSession(worktreePath: string): Session {
+	createSession(
+		worktreePath: string,
+		commandType: CommandType = 'claude',
+	): Session {
 		// Check if session already exists
 		const existing = this.sessions.get(worktreePath);
 		if (existing) {
@@ -85,12 +89,23 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 			.toString(36)
 			.substr(2, 9)}`;
 
-		// Parse Claude command arguments from environment variable
-		const claudeArgs = process.env['CCMANAGER_CLAUDE_ARGS']
-			? process.env['CCMANAGER_CLAUDE_ARGS'].split(' ')
-			: [];
+		// Determine command and arguments based on commandType
+		let command: string;
+		let args: string[];
 
-		const ptyProcess = spawn('claude', claudeArgs, {
+		if (commandType === 'codex') {
+			command = 'codex';
+			args = process.env['CCMANAGER_CODEX_ARGS']
+				? process.env['CCMANAGER_CODEX_ARGS'].split(' ')
+				: [];
+		} else {
+			command = 'claude';
+			args = process.env['CCMANAGER_CLAUDE_ARGS']
+				? process.env['CCMANAGER_CLAUDE_ARGS'].split(' ')
+				: [];
+		}
+
+		const ptyProcess = spawn(command, args, {
 			name: 'xterm-color',
 			cols: process.stdout.columns || 80,
 			rows: process.stdout.rows || 24,
@@ -115,6 +130,7 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 			lastActivity: new Date(),
 			isActive: false,
 			terminal,
+			commandType,
 		};
 
 		// Set up persistent background data handler for state detection
