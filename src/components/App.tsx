@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {useApp, Box, Text} from 'ink';
 import Menu from './Menu.js';
 import Session from './Session.js';
@@ -19,6 +19,9 @@ import {
 	CommandAvailability,
 } from '../utils/commandChecker.js';
 
+// Global flag to prevent title duplication
+let titleRendered = false;
+
 type View =
 	| 'menu'
 	| 'session'
@@ -32,11 +35,22 @@ type View =
 	| 'configuration'
 	| 'no-commands-available';
 
-const App: React.FC = () => {
+const App: React.FC = React.memo(function App() {
 	const {exit} = useApp();
 	const [view, setView] = useState<View>('menu');
-	const [sessionManager] = useState(() => new SessionManager());
-	const [worktreeService] = useState(() => new WorktreeService());
+	const sessionManagerRef = useRef<SessionManager | null>(null);
+	const worktreeServiceRef = useRef<WorktreeService | null>(null);
+
+	// Initialize services only once
+	if (!sessionManagerRef.current) {
+		sessionManagerRef.current = new SessionManager();
+	}
+	if (!worktreeServiceRef.current) {
+		worktreeServiceRef.current = new WorktreeService();
+	}
+
+	const sessionManager = sessionManagerRef.current;
+	const worktreeService = worktreeServiceRef.current;
 	const [activeSession, setActiveSession] = useState<SessionType | null>(null);
 	const [selectedWorktree, setSelectedWorktree] = useState<Worktree | null>(
 		null,
@@ -47,17 +61,22 @@ const App: React.FC = () => {
 		useState<CommandAvailability | null>(null);
 	const [isZellijAvailable, setIsZellijAvailable] = useState(false);
 	const [isInsideZellij, setIsInsideZellij] = useState(false);
+	const [isInitialized, setIsInitialized] = useState(false);
 
 	useEffect(() => {
-		// Check command availability on startup
-		const availability = checkCommandAvailability();
-		setCommandAvailability(availability);
+		// Prevent double initialization
+		if (isInitialized) return;
 
-		// Check Zellij availability
+		// Batch all initial state updates
+		const availability = checkCommandAvailability();
 		const zellijAvailable = ZellijService.isZellijAvailable();
 		const insideZellij = ZellijService.isInsideZellij();
+
+		// Use a single state update batch
+		setCommandAvailability(availability);
 		setIsZellijAvailable(zellijAvailable);
 		setIsInsideZellij(insideZellij);
+		setIsInitialized(true);
 
 		// If no commands are available, show error view
 		if (availability.available.length === 0) {
@@ -86,7 +105,7 @@ const App: React.FC = () => {
 			// Delay session discovery to allow UI to initialize
 			setTimeout(discoverSessions, 100);
 		}
-	}, [sessionManager]);
+	}, [isInitialized, sessionManager]); // Include all dependencies
 
 	useEffect(() => {
 		// Listen for session exits to return to menu automatically
@@ -118,7 +137,7 @@ const App: React.FC = () => {
 			sessionManager.off('sessionExit', handleSessionExit);
 			sessionManager.destroy();
 		};
-	}, [sessionManager]);
+	}, [sessionManager]); // sessionManager is stable via useRef
 
 	const handleSelectWorktree = async (worktree: Worktree) => {
 		// Check if this is the new worktree option
@@ -296,9 +315,10 @@ const App: React.FC = () => {
 			setMenuKey(prev => prev + 1); // Force menu refresh
 
 			// Clear the screen when returning to menu
-			if (process.stdout.isTTY) {
-				process.stdout.write('\x1B[2J\x1B[H');
-			}
+			// Disabled to prevent double rendering
+			// if (process.stdout.isTTY) {
+			//	process.stdout.write('\x1B[2J\x1B[H');
+			// }
 
 			// Ensure stdin is in a clean state for Ink components
 			if (process.stdin.isTTY) {
@@ -527,12 +547,28 @@ const App: React.FC = () => {
 	};
 
 	if (view === 'menu') {
+		// Use global flag to ensure title is only rendered once
+		const shouldShowTitle = !titleRendered;
+		if (!titleRendered) {
+			titleRendered = true;
+		}
+
 		return (
-			<Menu
-				key={menuKey}
-				sessionManager={sessionManager}
-				onSelectWorktree={handleSelectWorktree}
-			/>
+			<Box flexDirection="column">
+				{shouldShowTitle && (
+					<Box marginBottom={1}>
+						<Text bold color="green">
+							CCManager - Claude Code/Codex CLI Worktree Manager
+						</Text>
+					</Box>
+				)}
+				<Menu
+					key={menuKey}
+					sessionManager={sessionManager}
+					onSelectWorktree={handleSelectWorktree}
+					showTitle={false}
+				/>
+			</Box>
 		);
 	}
 
@@ -697,6 +733,6 @@ const App: React.FC = () => {
 	}
 
 	return null;
-};
+});
 
 export default App;

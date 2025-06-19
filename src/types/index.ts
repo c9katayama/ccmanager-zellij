@@ -17,13 +17,13 @@ export interface Worktree {
 export interface Session {
 	id: string;
 	worktreePath: string;
-	process: IPty;
+	process: IPty | null; // null for Zellij-managed sessions
 	state: SessionState;
 	output: string[]; // Recent output for state detection
 	outputHistory: Buffer[]; // Full output history as buffers
 	lastActivity: Date;
 	isActive: boolean;
-	terminal: Terminal; // Virtual terminal for state detection (xterm Terminal instance)
+	terminal: Terminal | null; // null for Zellij-managed sessions
 	stateCheckInterval?: NodeJS.Timeout; // Interval for checking terminal state
 	commandType: CommandType; // Type of command being executed (claude or codex)
 	isZellijSession?: boolean; // Flag to indicate if this is a Zellij-managed session

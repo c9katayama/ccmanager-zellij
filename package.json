@@ -33,7 +33,9 @@
 		"lint:fix": "eslint src --fix",
 		"typecheck": "tsc --noEmit",
 		"prepublishOnly": "npm run lint && npm run typecheck && npm run test:run && npm run build",
-		"prepare": "npm run build"
+		"prepare": "npm run build && chmod +x dist/cli.js",
+		"update-global": "npm run build && chmod +x dist/cli.js && npm link",
+		"dev-install": "npm run update-global"
 	},
 	"files": [
 		"dist"

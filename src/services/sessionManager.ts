@@ -1,4 +1,4 @@
-import {spawn} from 'node-pty';
+import {spawn, IPty} from 'node-pty';
 import {
 	Session,
 	SessionManager as ISessionManager,
@@ -12,6 +12,7 @@ import {configurationManager} from './configurationManager.js';
 import {WorktreeService} from './worktreeService.js';
 import {ZellijService} from './zellijService.js';
 const {Terminal} = pkg;
+type TerminalType = InstanceType<typeof Terminal>;
 
 export class SessionManager extends EventEmitter implements ISessionManager {
 	sessions: Map<string, Session>;
@@ -113,21 +114,13 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 				: [];
 		}
 
-		let ptyProcess: any;
-		let terminal: any;
+		let ptyProcess: IPty | null;
+		let terminal: TerminalType | null;
 
 		if (isZellijSession) {
-			// For Zellij sessions, create dummy process and terminal
-			ptyProcess = {
-				onData: () => {},
-				onExit: () => {},
-				kill: () => {},
-				write: () => {},
-			};
-			terminal = {
-				buffer: {active: {length: 0, getLine: () => null}},
-				write: () => {},
-			};
+			// For Zellij sessions, no actual PTY process needed
+			ptyProcess = null;
+			terminal = null;
 		} else {
 			// Normal session with actual PTY process
 			ptyProcess = spawn(command, args, {
@@ -177,9 +170,9 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 		}
 
 		// This handler always runs for all data
-		session.process.onData((data: string) => {
+		session.process?.onData((data: string) => {
 			// Write data to virtual terminal
-			session.terminal.write(data);
+			session.terminal?.write(data);
 
 			// Store in output history as Buffer
 			const buffer = Buffer.from(data, 'utf8');
@@ -209,7 +202,9 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 		// Set up interval-based state detection
 		session.stateCheckInterval = setInterval(() => {
 			const oldState = session.state;
-			const newState = this.detectTerminalState(session.terminal);
+			const newState = session.terminal
+				? this.detectTerminalState(session.terminal)
+				: 'idle';
 
 			if (newState !== oldState) {
 				session.state = newState;
@@ -218,7 +213,7 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 			}
 		}, 100); // Check every 100ms
 
-		session.process.onExit(() => {
+		session.process?.onExit(() => {
 			// Clear the state check interval
 			if (session.stateCheckInterval) {
 				clearInterval(session.stateCheckInterval);
@@ -255,7 +250,7 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 				clearInterval(session.stateCheckInterval);
 			}
 			try {
-				session.process.kill();
+				session.process?.kill();
 			} catch (_error) {
 				// Process might already be dead
 			}

@@ -61,7 +61,7 @@ const Session: React.FC<SessionProps> = ({
 		// https://github.com/kbwo/ccmanager/issues/2
 		const currentCols = process.stdout.columns || 80;
 		const currentRows = process.stdout.rows || 24;
-		session.process.resize(currentCols, currentRows);
+		session.process?.resize(currentCols, currentRows);
 		if (session.terminal) {
 			session.terminal.resize(currentCols, currentRows);
 		}
@@ -88,7 +88,7 @@ const Session: React.FC<SessionProps> = ({
 		const handleResize = () => {
 			const cols = process.stdout.columns || 80;
 			const rows = process.stdout.rows || 24;
-			session.process.resize(cols, rows);
+			session.process?.resize(cols, rows);
 			// Also resize the virtual terminal
 			if (session.terminal) {
 				session.terminal.resize(cols, rows);
@@ -131,7 +131,7 @@ const Session: React.FC<SessionProps> = ({
 			}
 
 			// Pass all other input directly to the PTY
-			session.process.write(data);
+			session.process?.write(data);
 		};
 
 		stdin.on('data', handleStdinData);

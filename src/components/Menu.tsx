@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import {Box, Text} from 'ink';
 import SelectInput from 'ink-select-input';
 import {Worktree, Session} from '../types/index.js';
@@ -15,6 +15,7 @@ import {
 interface MenuProps {
 	sessionManager: SessionManager;
 	onSelectWorktree: (worktree: Worktree) => void;
+	showTitle?: boolean; // Optional prop to control title display
 }
 
 interface MenuItem {
@@ -23,32 +24,35 @@ interface MenuItem {
 	worktree?: Worktree;
 }
 
-const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
+const Menu: React.FC<MenuProps> = React.memo(function Menu({
+	sessionManager,
+	onSelectWorktree,
+	showTitle = true,
+}) {
 	const [worktrees, setWorktrees] = useState<Worktree[]>([]);
 	const [sessions, setSessions] = useState<Session[]>([]);
-	const [items, setItems] = useState<MenuItem[]>([]);
+	// Remove items state - will use useMemo instead
 	const [isZellijAvailable, setIsZellijAvailable] = useState(false);
 	const [isInsideZellij, setIsInsideZellij] = useState(false);
 
+	// Initialize Zellij status on mount
 	useEffect(() => {
-		// Check Zellij availability
 		setIsZellijAvailable(ZellijService.isZellijAvailable());
 		setIsInsideZellij(ZellijService.isInsideZellij());
+	}, []);
 
-		// Load worktrees
+	// Load worktrees on mount
+	useEffect(() => {
 		const worktreeService = new WorktreeService();
 		const loadedWorktrees = worktreeService.getWorktrees();
 		setWorktrees(loadedWorktrees);
+	}, []);
 
-		// Update sessions
+	// Update sessions and listen for changes
+	useEffect(() => {
 		const updateSessions = () => {
 			const allSessions = sessionManager.getAllSessions();
 			setSessions(allSessions);
-
-			// Update worktree session status
-			loadedWorktrees.forEach(wt => {
-				wt.hasSession = allSessions.some(s => s.worktreePath === wt.path);
-			});
 		};
 
 		updateSessions();
@@ -66,7 +70,8 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 		};
 	}, [sessionManager]);
 
-	useEffect(() => {
+	// Memoize menu items to prevent unnecessary recalculations
+	const items = useMemo(() => {
 		// Build menu items
 		const menuItems: MenuItem[] = worktrees.map(wt => {
 			const session = sessions.find(s => s.worktreePath === wt.path);
@@ -122,7 +127,8 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 			label: `${MENU_ICONS.EXIT} Exit`,
 			value: 'exit',
 		});
-		setItems(menuItems);
+
+		return menuItems;
 	}, [worktrees, sessions]);
 
 	const handleSelect = (item: MenuItem) => {
@@ -175,11 +181,13 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 
 	return (
 		<Box flexDirection="column">
-			<Box marginBottom={1}>
-				<Text bold color="green">
-					CCManager - Claude Code/Codex CLI Worktree Manager
-				</Text>
-			</Box>
+			{showTitle && (
+				<Box marginBottom={1}>
+					<Text bold color="green">
+						CCManager - Claude Code/Codex CLI Worktree Manager
+					</Text>
+				</Box>
+			)}
 
 			<Box marginBottom={1} flexDirection="column">
 				<Text dimColor>
@@ -187,7 +195,7 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 				</Text>
 				{isZellijAvailable && isInsideZellij && (
 					<Text dimColor color="green">
-						🖼️ Zellij Mode: New sessions will open in separate tabs
+						🏁 Zellij Mode: New sessions will open in separate tabs
 					</Text>
 				)}
 				{isZellijAvailable && !isInsideZellij && (
@@ -213,6 +221,6 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 			</Box>
 		</Box>
 	);
-};
+});
 
 export default Menu;
