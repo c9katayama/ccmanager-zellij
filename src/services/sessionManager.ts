@@ -10,12 +10,14 @@ import pkg from '@xterm/headless';
 import {exec} from 'child_process';
 import {configurationManager} from './configurationManager.js';
 import {WorktreeService} from './worktreeService.js';
+import {ZellijService} from './zellijService.js';
 const {Terminal} = pkg;
 
 export class SessionManager extends EventEmitter implements ISessionManager {
 	sessions: Map<string, Session>;
 	private waitingWithBottomBorder: Map<string, boolean> = new Map();
 	private busyTimers: Map<string, NodeJS.Timeout> = new Map();
+	private zellijStatusTimer?: NodeJS.Timeout;
 
 	private stripAnsi(str: string): string {
 		// Remove all ANSI escape sequences including cursor movement, color codes, etc.
@@ -73,11 +75,17 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 	constructor() {
 		super();
 		this.sessions = new Map();
+		
+		// Start Zellij status monitoring if we're inside Zellij
+		if (ZellijService.isInsideZellij()) {
+			this.startZellijStatusMonitoring();
+		}
 	}
 
 	createSession(
 		worktreePath: string,
 		commandType: CommandType = 'claude',
+		isZellijSession: boolean = false,
 	): Session {
 		// Check if session already exists
 		const existing = this.sessions.get(worktreePath);
@@ -105,32 +113,51 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 				: [];
 		}
 
-		const ptyProcess = spawn(command, args, {
-			name: 'xterm-color',
-			cols: process.stdout.columns || 80,
-			rows: process.stdout.rows || 24,
-			cwd: worktreePath,
-			env: process.env,
-		});
+		let ptyProcess: any;
+		let terminal: any;
 
-		// Create virtual terminal for state detection
-		const terminal = new Terminal({
-			cols: process.stdout.columns || 80,
-			rows: process.stdout.rows || 24,
-			allowProposedApi: true,
-		});
+		if (isZellijSession) {
+			// For Zellij sessions, create dummy process and terminal
+			ptyProcess = {
+				onData: () => {},
+				onExit: () => {},
+				kill: () => {},
+				write: () => {},
+			};
+			terminal = {
+				buffer: { active: { length: 0, getLine: () => null } },
+				write: () => {},
+			};
+		} else {
+			// Normal session with actual PTY process
+			ptyProcess = spawn(command, args, {
+				name: 'xterm-color',
+				cols: process.stdout.columns || 80,
+				rows: process.stdout.rows || 24,
+				cwd: worktreePath,
+				env: process.env,
+			});
+
+			// Create virtual terminal for state detection
+			terminal = new Terminal({
+				cols: process.stdout.columns || 80,
+				rows: process.stdout.rows || 24,
+				allowProposedApi: true,
+			});
+		}
 
 		const session: Session = {
 			id,
 			worktreePath,
 			process: ptyProcess,
-			state: 'busy', // Session starts as busy when created
+			state: isZellijSession ? 'idle' : 'busy',
 			output: [],
 			outputHistory: [],
 			lastActivity: new Date(),
 			isActive: false,
 			terminal,
 			commandType,
+			isZellijSession,
 		};
 
 		// Set up persistent background data handler for state detection
@@ -144,6 +171,11 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 	}
 
 	private setupBackgroundHandler(session: Session): void {
+		// Skip setup for Zellij sessions as they don't have real PTY processes
+		if (session.isZellijSession) {
+			return;
+		}
+
 		// This handler always runs for all data
 		session.process.onData((data: string) => {
 			// Write data to virtual terminal
@@ -286,7 +318,68 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 		}
 	}
 
+	/**
+	 * Start monitoring Zellij session statuses
+	 */
+	private startZellijStatusMonitoring(): void {
+		const updateZellijSessionStates = async () => {
+			const zellijSessions = Array.from(this.sessions.values()).filter(s => s.isZellijSession);
+			
+			for (const session of zellijSessions) {
+				try {
+					const paneName = ZellijService.getBranchNameFromPath(session.worktreePath);
+					const isActive = await ZellijService.isPaneActive(paneName, session.commandType);
+					
+					// More nuanced state detection
+					let newState: SessionState;
+					if (isActive) {
+						// If active, it could be busy processing or waiting for input
+						// For Zellij sessions, we'll use a simpler busy/idle model
+						newState = 'busy';
+					} else {
+						// Check if process exists but is idle
+						const processExists = await ZellijService.isProcessRunning(session.commandType);
+						newState = processExists ? 'idle' : 'idle'; // Process ended
+					}
+					
+					if (session.state !== newState) {
+						const oldState = session.state;
+						session.state = newState;
+						session.lastActivity = new Date();
+						
+						// Execute status hooks
+						this.executeStatusHook(oldState, newState, session);
+						
+						// Emit state change event
+						this.emit('sessionStateChanged', session);
+					}
+				} catch (error) {
+					console.error('Error checking Zellij pane status:', error);
+				}
+			}
+		};
+
+		// Check every 2 seconds
+		this.zellijStatusTimer = setInterval(updateZellijSessionStates, 2000);
+		
+		// Initial check
+		updateZellijSessionStates();
+	}
+
+	/**
+	 * Stop monitoring Zellij session statuses
+	 */
+	private stopZellijStatusMonitoring(): void {
+		if (this.zellijStatusTimer) {
+			clearInterval(this.zellijStatusTimer);
+			this.zellijStatusTimer = undefined;
+		}
+	}
+
 	destroy(): void {
+		// Stop Zellij monitoring
+		this.stopZellijStatusMonitoring();
+		
 		// Clean up all sessions
 		for (const worktreePath of this.sessions.keys()) {
 			this.destroySession(worktreePath);

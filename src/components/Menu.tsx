@@ -4,6 +4,7 @@ import SelectInput from 'ink-select-input';
 import {Worktree, Session} from '../types/index.js';
 import {WorktreeService} from '../services/worktreeService.js';
 import {SessionManager} from '../services/sessionManager.js';
+import {ZellijService} from '../services/zellijService.js';
 import {
 	STATUS_ICONS,
 	STATUS_LABELS,
@@ -26,8 +27,14 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 	const [worktrees, setWorktrees] = useState<Worktree[]>([]);
 	const [sessions, setSessions] = useState<Session[]>([]);
 	const [items, setItems] = useState<MenuItem[]>([]);
+	const [isZellijAvailable, setIsZellijAvailable] = useState(false);
+	const [isInsideZellij, setIsInsideZellij] = useState(false);
 
 	useEffect(() => {
+		// Check Zellij availability
+		setIsZellijAvailable(ZellijService.isZellijAvailable());
+		setIsInsideZellij(ZellijService.isInsideZellij());
+
 		// Load worktrees
 		const worktreeService = new WorktreeService();
 		const loadedWorktrees = worktreeService.getWorktrees();
@@ -67,9 +74,17 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 			let commandPrefix = '';
 
 			if (session) {
-				status = ` [${getStatusDisplay(session.state)}]`;
+				const statusDisplay = session.isZellijSession 
+					? `Zellij-${getStatusDisplay(session.state)}` 
+					: getStatusDisplay(session.state);
+				status = ` [${statusDisplay}]`;
 				// Add command type prefix
 				commandPrefix = session.commandType === 'codex' ? '[X] ' : '[C] ';
+				if (session.isZellijSession) {
+					// Use different icons for Claude vs Codex in Zellij
+					const zellijIcon = session.commandType === 'codex' ? '🧠' : '🐦';
+					commandPrefix += `${zellijIcon} `;
+				}
 			}
 
 			const branchName = wt.branch.replace('refs/heads/', '');
@@ -166,10 +181,23 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 				</Text>
 			</Box>
 
-			<Box marginBottom={1}>
+			<Box marginBottom={1} flexDirection="column">
 				<Text dimColor>
 					Select a worktree to start or resume a Claude Code session:
 				</Text>
+				{isZellijAvailable && isInsideZellij && (
+					<Text dimColor color="green">
+						🖼️ Zellij Mode: New sessions will open in separate tabs
+					</Text>
+				)}
+				{isZellijAvailable && !isInsideZellij && (
+					<Text dimColor color="yellow">
+						⚠️ Zellij detected but not running inside session
+					</Text>
+				)}
+				{!isZellijAvailable && (
+					<Text dimColor>💡 Install Zellij for separate window sessions</Text>
+				)}
 			</Box>
 
 			<SelectInput items={items} onSelect={handleSelect} isFocused={true} />

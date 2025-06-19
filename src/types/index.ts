@@ -26,11 +26,12 @@ export interface Session {
 	terminal: Terminal; // Virtual terminal for state detection (xterm Terminal instance)
 	stateCheckInterval?: NodeJS.Timeout; // Interval for checking terminal state
 	commandType: CommandType; // Type of command being executed (claude or codex)
+	isZellijSession?: boolean; // Flag to indicate if this is a Zellij-managed session
 }
 
 export interface SessionManager {
 	sessions: Map<string, Session>;
-	createSession(worktreePath: string, commandType: CommandType): Session;
+	createSession(worktreePath: string, commandType: CommandType, isZellijSession?: boolean): Session;
 	getSession(worktreePath: string): Session | undefined;
 	destroySession(worktreePath: string): void;
 	getAllSessions(): Session[];

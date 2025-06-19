@@ -9,6 +9,7 @@ import Configuration from './Configuration.js';
 import CommandSelection from './CommandSelection.js';
 import {SessionManager} from '../services/sessionManager.js';
 import {WorktreeService} from '../services/worktreeService.js';
+import {ZellijService} from '../services/zellijService.js';
 import {Worktree, Session as SessionType, CommandType} from '../types/index.js';
 import {shortcutManager} from '../services/shortcutManager.js';
 import {
@@ -44,11 +45,19 @@ const App: React.FC = () => {
 	const [menuKey, setMenuKey] = useState(0); // Force menu refresh
 	const [commandAvailability, setCommandAvailability] =
 		useState<CommandAvailability | null>(null);
+	const [isZellijAvailable, setIsZellijAvailable] = useState(false);
+	const [isInsideZellij, setIsInsideZellij] = useState(false);
 
 	useEffect(() => {
 		// Check command availability on startup
 		const availability = checkCommandAvailability();
 		setCommandAvailability(availability);
+
+		// Check Zellij availability
+		const zellijAvailable = ZellijService.isZellijAvailable();
+		const insideZellij = ZellijService.isInsideZellij();
+		setIsZellijAvailable(zellijAvailable);
+		setIsInsideZellij(insideZellij);
 
 		// If no commands are available, show error view
 		if (availability.available.length === 0) {
@@ -88,7 +97,7 @@ const App: React.FC = () => {
 		};
 	}, [sessionManager]);
 
-	const handleSelectWorktree = (worktree: Worktree) => {
+	const handleSelectWorktree = async (worktree: Worktree) => {
 		// Check if this is the new worktree option
 		if (worktree.path === '') {
 			setView('new-worktree');
@@ -127,23 +136,77 @@ const App: React.FC = () => {
 			// No existing session, check command availability
 			if (!commandAvailability) return; // Wait for availability check
 
-			if (shouldShowCommandSelection(commandAvailability)) {
-				// Multiple commands available, show selection
-				setSelectedWorktree(worktree);
-				setView('command-selection');
+			// Check if we should use Zellij
+			if (isZellijAvailable && isInsideZellij) {
+				// Use Zellij to create a new tab/pane
+				if (shouldShowCommandSelection(commandAvailability)) {
+					// Multiple commands available, show selection
+					setSelectedWorktree(worktree);
+					setView('command-selection');
+				} else {
+					// Only one command available, create Zellij tab directly
+					const defaultCommand = getDefaultCommandType(commandAvailability);
+					if (defaultCommand) {
+						const branchName = worktree.branch.replace('refs/heads/', '');
+						const zellijResult = await ZellijService.createWorktreeTab(
+							worktree.path,
+							branchName,
+							defaultCommand,
+						);
+
+						if (zellijResult.success) {
+							// Create a placeholder session for status tracking
+							sessionManager.createSession(worktree.path, defaultCommand, true);
+							
+							console.log(
+								'Successfully created Zellij session for worktree:',
+								worktree.path,
+							);
+							return;
+						} else {
+							console.error(
+								'Failed to create Zellij session:',
+								zellijResult.error,
+							);
+							setError(
+								`Zellij integration failed: ${zellijResult.error}. Falling back to regular session.`,
+							);
+
+							// Fallback to regular session
+							const session = sessionManager.createSession(
+								worktree.path,
+								defaultCommand,
+							);
+							setActiveSession(session);
+							setView('session');
+						}
+					}
+				}
 			} else {
-				// Only one command available, create session directly
-				const defaultCommand = getDefaultCommandType(commandAvailability);
-				if (defaultCommand) {
-					session = sessionManager.createSession(worktree.path, defaultCommand);
-					setActiveSession(session);
-					setView('session');
+				// Fallback to traditional session management
+				if (shouldShowCommandSelection(commandAvailability)) {
+					// Multiple commands available, show selection
+					setSelectedWorktree(worktree);
+					setView('command-selection');
+				} else {
+					// Only one command available, create session directly
+					const defaultCommand = getDefaultCommandType(commandAvailability);
+					if (defaultCommand) {
+						session = sessionManager.createSession(
+							worktree.path,
+							defaultCommand,
+						);
+						setActiveSession(session);
+						setView('session');
+					}
 				}
 			}
 		} else {
-			// Existing session found, open it directly
-			setActiveSession(session);
-			setView('session');
+			// Existing session found, open it directly (only in non-Zellij mode)
+			if (!(isZellijAvailable && isInsideZellij)) {
+				setActiveSession(session);
+				setView('session');
+			}
 		}
 	};
 
@@ -181,7 +244,7 @@ const App: React.FC = () => {
 		const result = worktreeService.createWorktree(path, branch);
 
 		if (result.success) {
-			// Success - handle new worktree based on command availability
+			// Success - determine how to handle the new worktree
 			const newWorktree: Worktree = {
 				path: path,
 				branch: `refs/heads/${branch}`,
@@ -191,20 +254,61 @@ const App: React.FC = () => {
 
 			if (!commandAvailability) return; // Wait for availability check
 
-			if (shouldShowCommandSelection(commandAvailability)) {
-				// Multiple commands available, show selection
-				setSelectedWorktree(newWorktree);
-				setView('command-selection');
+			// Check if we should use Zellij
+			if (isZellijAvailable && isInsideZellij) {
+				// Use Zellij to create a new tab/pane
+				if (shouldShowCommandSelection(commandAvailability)) {
+					// Multiple commands available, show selection
+					setSelectedWorktree(newWorktree);
+					setView('command-selection');
+				} else {
+					// Only one command available, create Zellij tab directly
+					const defaultCommand = getDefaultCommandType(commandAvailability);
+					if (defaultCommand) {
+						const zellijResult = await ZellijService.createWorktreeTab(
+							newWorktree.path,
+							branch,
+							defaultCommand,
+						);
+
+						if (zellijResult.success) {
+							// Create a placeholder session for status tracking
+							sessionManager.createSession(newWorktree.path, defaultCommand, true);
+							
+							console.log(
+								'Successfully created Zellij session for new worktree:',
+								newWorktree.path,
+							);
+							handleReturnToMenu();
+						} else {
+							console.error(
+								'Failed to create Zellij session for new worktree:',
+								zellijResult.error,
+							);
+							setError(
+								`Zellij integration failed: ${zellijResult.error}. Please try again.`,
+							);
+							setView('new-worktree');
+						}
+					}
+				}
 			} else {
-				// Only one command available, create session directly
-				const defaultCommand = getDefaultCommandType(commandAvailability);
-				if (defaultCommand) {
-					const session = sessionManager.createSession(
-						newWorktree.path,
-						defaultCommand,
-					);
-					setActiveSession(session);
-					setView('session');
+				// Fallback to traditional session management
+				if (shouldShowCommandSelection(commandAvailability)) {
+					// Multiple commands available, show selection
+					setSelectedWorktree(newWorktree);
+					setView('command-selection');
+				} else {
+					// Only one command available, create session directly
+					const defaultCommand = getDefaultCommandType(commandAvailability);
+					if (defaultCommand) {
+						const session = sessionManager.createSession(
+							newWorktree.path,
+							defaultCommand,
+						);
+						setActiveSession(session);
+						setView('session');
+					}
 				}
 			}
 		} else {
@@ -286,17 +390,57 @@ const App: React.FC = () => {
 		handleReturnToMenu();
 	};
 
-	const handleCommandSelection = (commandType: CommandType) => {
+	const handleCommandSelection = async (commandType: CommandType) => {
 		if (!selectedWorktree) return;
 
-		// Create session with selected command type
-		const session = sessionManager.createSession(
-			selectedWorktree.path,
-			commandType,
-		);
-		setActiveSession(session);
-		setSelectedWorktree(null);
-		setView('session');
+		// Check if we should use Zellij
+		if (isZellijAvailable && isInsideZellij) {
+			// Use Zellij to create a new tab/pane
+			const branchName = selectedWorktree.branch.replace('refs/heads/', '');
+			const zellijResult = await ZellijService.createWorktreeTab(
+				selectedWorktree.path,
+				branchName,
+				commandType,
+			);
+
+			if (zellijResult.success) {
+				// Create a placeholder session for status tracking
+				sessionManager.createSession(selectedWorktree.path, commandType, true);
+				
+				console.log(
+					'Successfully created Zellij session via command selection:',
+					selectedWorktree.path,
+				);
+				setSelectedWorktree(null);
+				handleReturnToMenu();
+			} else {
+				console.error(
+					'Failed to create Zellij session via command selection:',
+					zellijResult.error,
+				);
+				setError(
+					`Zellij integration failed: ${zellijResult.error}. Falling back to regular session.`,
+				);
+
+				// Fallback to regular session
+				const session = sessionManager.createSession(
+					selectedWorktree.path,
+					commandType,
+				);
+				setActiveSession(session);
+				setSelectedWorktree(null);
+				setView('session');
+			}
+		} else {
+			// Fallback to traditional session management
+			const session = sessionManager.createSession(
+				selectedWorktree.path,
+				commandType,
+			);
+			setActiveSession(session);
+			setSelectedWorktree(null);
+			setView('session');
+		}
 	};
 
 	const handleCancelCommandSelection = () => {
