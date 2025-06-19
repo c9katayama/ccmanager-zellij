@@ -166,6 +166,17 @@ const App: React.FC = () => {
 				}
 				if (session) {
 					console.log(`✅ Restored existing session for: ${worktree.path}`);
+
+					// Focus the existing pane
+					const focusResult = await ZellijService.focusPaneByWorktree(
+						worktree.path,
+					);
+					if (focusResult.success) {
+						console.log(`✅ Focused existing pane for: ${worktree.path}`);
+					} else {
+						console.warn(`⚠️ Could not focus pane: ${focusResult.error}`);
+					}
+
 					// Force refresh menu to show restored session
 					setMenuKey(prev => prev + 1);
 					return; // Session restored, no need to create new one
@@ -245,8 +256,29 @@ const App: React.FC = () => {
 				}
 			}
 		} else {
-			// Existing session found, open it directly (only in non-Zellij mode)
-			if (!(isZellijAvailable && isInsideZellij)) {
+			// Existing session found
+			if (isZellijAvailable && isInsideZellij) {
+				// In Zellij mode, focus the existing pane instead of opening session view
+				try {
+					const focusResult = await ZellijService.focusPaneByWorktree(
+						worktree.path,
+					);
+					if (focusResult.success) {
+						console.log(`✅ Focused existing pane for: ${worktree.path}`);
+					} else {
+						console.warn(`⚠️ Could not focus pane: ${focusResult.error}`);
+						// Fallback: show session view
+						setActiveSession(session);
+						setView('session');
+					}
+				} catch (error) {
+					console.error(`Error focusing pane for ${worktree.path}:`, error);
+					// Fallback: show session view
+					setActiveSession(session);
+					setView('session');
+				}
+			} else {
+				// Non-Zellij mode: open session view directly
 				setActiveSession(session);
 				setView('session');
 			}

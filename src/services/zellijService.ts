@@ -366,6 +366,7 @@ export class ZellijService {
 			cwd: string;
 			command: string;
 			commandType?: 'claude' | 'codex';
+			focusIndex: number; // Add focus index for accurate navigation
 		}>
 	> {
 		if (!this.isInsideZellij()) {
@@ -380,6 +381,7 @@ export class ZellijService {
 			// Parse the layout output to extract pane information
 			const lines = stdout.split('\n');
 			let currentCwd = '';
+			let focusIndex = 0; // Track actual focus index (all command panes)
 
 			for (let i = 0; i < lines.length; i++) {
 				const line = lines[i]?.trim();
@@ -400,8 +402,8 @@ export class ZellijService {
 
 					if (commandMatch && commandMatch[1]) {
 						const command = commandMatch[1];
-						let cwd = (cwdMatch && cwdMatch[1]) ? cwdMatch[1] : currentCwd;
-						
+						let cwd = cwdMatch && cwdMatch[1] ? cwdMatch[1] : currentCwd;
+
 						// Convert relative paths to absolute paths
 						if (cwd && !cwd.startsWith('/')) {
 							cwd = resolve(currentCwd, cwd);
@@ -415,8 +417,8 @@ export class ZellijService {
 							commandType = 'codex';
 						}
 
+						// Store ALL command panes with their focus index, but only return claude/codex
 						if (commandType && cwd) {
-							// Generate a unique ID and name for this pane
 							const id: string = `pane-${panes.length + 1}`;
 							const name = this.getBranchNameFromPath(cwd);
 
@@ -426,8 +428,12 @@ export class ZellijService {
 								cwd,
 								command,
 								commandType,
+								focusIndex, // Store the actual focus index
 							});
 						}
+
+						// Increment focus index for ALL command panes (including npm, etc.)
+						focusIndex++;
 					}
 				}
 			}
@@ -450,6 +456,7 @@ export class ZellijService {
 			cwd: string;
 			command: string;
 			commandType?: 'claude' | 'codex';
+			focusIndex: number;
 		}>
 	> {
 		try {
@@ -486,6 +493,7 @@ export class ZellijService {
 								cwd,
 								command: args,
 								commandType,
+								focusIndex: -1, // Unknown focus index in fallback mode
 							});
 						}
 					}
@@ -510,6 +518,7 @@ export class ZellijService {
 			cwd: string;
 			command: string;
 			commandType?: 'claude' | 'codex';
+			focusIndex: number;
 		};
 	}> {
 		const existingPanes = await this.getExistingPanes();
@@ -526,5 +535,158 @@ export class ZellijService {
 			exists: !!matchingPane,
 			pane: matchingPane,
 		};
+	}
+
+	/**
+	 * Get the currently focused pane information
+	 */
+	static async getCurrentFocusedPane(): Promise<{
+		cwd: string;
+		index: number;
+	} | null> {
+		try {
+			const layout = await execAsync('zellij action dump-layout');
+			const lines = layout.stdout.split('\n');
+
+			let currentCwd = '';
+			let paneIndex = 0;
+			let focusedPaneInfo: {cwd: string; index: number} | null = null;
+
+			for (const line of lines) {
+				const trimmedLine = line?.trim();
+				if (!trimmedLine) continue;
+
+				// Extract current working directory from cwd lines
+				if (trimmedLine.startsWith('cwd ')) {
+					const cwdMatch = trimmedLine.match(/cwd "([^"]+)"/);
+					if (cwdMatch && cwdMatch[1]) {
+						currentCwd = cwdMatch[1];
+					}
+				}
+
+				// Look for pane definitions with commands
+				if (
+					trimmedLine.startsWith('pane') &&
+					trimmedLine.includes('command=')
+				) {
+					const commandMatch = trimmedLine.match(/pane command="([^"]+)"/);
+					const cwdMatch = trimmedLine.match(/cwd="([^"]+)"/);
+					const isFocused = trimmedLine.includes('focus=true');
+
+					if (commandMatch && commandMatch[1]) {
+						let cwd = cwdMatch && cwdMatch[1] ? cwdMatch[1] : currentCwd;
+
+						// Convert relative paths to absolute paths
+						if (cwd && !cwd.startsWith('/')) {
+							cwd = resolve(currentCwd, cwd);
+						}
+
+						if (isFocused) {
+							focusedPaneInfo = {
+								cwd,
+								index: paneIndex,
+							};
+						}
+
+						paneIndex++;
+					}
+				}
+			}
+
+			return focusedPaneInfo;
+		} catch (error) {
+			console.error('Error getting focused pane:', error);
+			return null;
+		}
+	}
+
+	/**
+	 * Focus on a specific pane by navigating to it
+	 */
+	static async focusPane(targetCwd: string): Promise<{
+		success: boolean;
+		error?: string;
+	}> {
+		if (!this.isInsideZellij()) {
+			return {
+				success: false,
+				error: 'Not inside Zellij session',
+			};
+		}
+
+		try {
+			const existingPanes = await this.getExistingPanes();
+			const currentFocus = await this.getCurrentFocusedPane();
+
+			if (!currentFocus) {
+				return {
+					success: false,
+					error: 'Could not determine current focused pane',
+				};
+			}
+
+			// Find the target pane
+			const targetPane = existingPanes.find(pane => {
+				const paneAbsPath = resolve(pane.cwd);
+				const targetAbsPath = resolve(targetCwd);
+				return paneAbsPath === targetAbsPath;
+			});
+
+			if (!targetPane) {
+				return {
+					success: false,
+					error: 'Target pane not found',
+				};
+			}
+
+			// Calculate how many steps to move using the correct focus index
+			const currentIndex = currentFocus.index;
+			const targetIndex = targetPane.focusIndex;
+			let stepsToMove = targetIndex - currentIndex;
+
+			// Navigate to the target pane
+			if (stepsToMove > 0) {
+				// Move forward
+				for (let i = 0; i < stepsToMove; i++) {
+					await execAsync('zellij action focus-next-pane');
+					// Small delay to ensure the focus change is processed
+					await new Promise(resolve => setTimeout(resolve, 50));
+				}
+			} else if (stepsToMove < 0) {
+				// Move backward
+				for (let i = 0; i < Math.abs(stepsToMove); i++) {
+					await execAsync('zellij action focus-previous-pane');
+					// Small delay to ensure the focus change is processed
+					await new Promise(resolve => setTimeout(resolve, 50));
+				}
+			}
+			// If stepsToMove === 0, the pane is already focused
+
+			return {success: true};
+		} catch (error) {
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error',
+			};
+		}
+	}
+
+	/**
+	 * Focus on a pane by its worktree path
+	 */
+	static async focusPaneByWorktree(worktreePath: string): Promise<{
+		success: boolean;
+		error?: string;
+	}> {
+		const paneInfo = await this.hasPaneForWorktree(worktreePath);
+
+		if (!paneInfo.exists || !paneInfo.pane) {
+			return {
+				success: false,
+				error: 'Pane not found for worktree',
+			};
+		}
+
+		return this.focusPane(paneInfo.pane.cwd);
 	}
 }
