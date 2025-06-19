@@ -689,4 +689,79 @@ export class ZellijService {
 
 		return this.focusPane(paneInfo.pane.cwd);
 	}
+
+	/**
+	 * Close a pane for a specific worktree
+	 */
+	static async closePaneForWorktree(worktreePath: string): Promise<{
+		success: boolean;
+		error?: string;
+	}> {
+		if (!this.isInsideZellij()) {
+			return {
+				success: false,
+				error: 'Not inside Zellij session',
+			};
+		}
+
+		try {
+			const paneInfo = await this.hasPaneForWorktree(worktreePath);
+
+			if (!paneInfo.exists || !paneInfo.pane) {
+				return {
+					success: true,
+					error: 'No pane found for worktree (already closed or not created)',
+				};
+			}
+
+			// First focus the pane to ensure we close the correct one
+			const focusResult = await this.focusPane(paneInfo.pane.cwd);
+			if (!focusResult.success) {
+				return {
+					success: false,
+					error: `Failed to focus pane: ${focusResult.error}`,
+				};
+			}
+
+			// Wait a moment for focus to complete
+			await new Promise(resolve => setTimeout(resolve, 100));
+
+			// Close the focused pane
+			await execAsync('zellij action close-pane');
+
+			return {success: true};
+		} catch (error) {
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error',
+			};
+		}
+	}
+
+	/**
+	 * Close multiple panes for multiple worktrees
+	 */
+	static async closePanesForWorktrees(worktreePaths: string[]): Promise<{
+		success: boolean;
+		errors: string[];
+		closedCount: number;
+	}> {
+		const errors: string[] = [];
+		let closedCount = 0;
+
+		for (const worktreePath of worktreePaths) {
+			const result = await this.closePaneForWorktree(worktreePath);
+			if (result.success) {
+				closedCount++;
+			} else if (result.error && !result.error.includes('already closed')) {
+				errors.push(`${worktreePath}: ${result.error}`);
+			}
+		}
+
+		return {
+			success: errors.length === 0,
+			errors,
+			closedCount,
+		};
+	}
 }
