@@ -425,6 +425,18 @@ const App: React.FC = React.memo(function App() {
 		setView('deleting-worktree');
 		setError(null);
 
+		// First close any Zellij panes associated with these worktrees
+		if (ZellijService.isInsideZellij()) {
+			const closeResult =
+				await ZellijService.closePanesForWorktrees(worktreePaths);
+			if (closeResult.closedCount > 0) {
+				console.log(`Closed ${closeResult.closedCount} Zellij panes`);
+			}
+			if (closeResult.errors.length > 0) {
+				console.warn('Some panes could not be closed:', closeResult.errors);
+			}
+		}
+
 		// Delete the worktrees
 		let hasError = false;
 		for (const path of worktreePaths) {
