@@ -175,11 +175,7 @@ export class ZellijService {
 			await new Promise(resolve => setTimeout(resolve, 300));
 
 			// Step 3: Send command sequence
-			const commands = [
-				`echo 'Starting ${commandType}...'`,
-				`cd "${absoluteWorktreePath}"`,
-				`${fullCommand}`,
-			];
+			const commands = [`cd "${absoluteWorktreePath}"`, `${fullCommand}`];
 
 			// Execute commands in sequence
 			for (const command of commands) {
