@@ -229,44 +229,49 @@ export class ZellijService {
 	/**
 	 * Check if a specific pane is active by monitoring process activity
 	 */
-	static async isPaneActive(paneName: string, commandType: 'claude' | 'codex'): Promise<boolean> {
+	static async isPaneActive(
+		paneName: string,
+		commandType: 'claude' | 'codex',
+	): Promise<boolean> {
 		if (!this.isInsideZellij()) {
 			return false;
 		}
 
 		try {
 			// Get process information with CPU usage and start time
-			const {stdout} = await execAsync(`ps -eo pid,ppid,pcpu,etime,comm,args | grep -v grep | grep "${commandType}"`);
-			
+			const {stdout} = await execAsync(
+				`ps -eo pid,ppid,pcpu,etime,comm,args | grep -v grep | grep "${commandType}"`,
+			);
+
 			if (!stdout.trim()) {
 				return false; // No process found
 			}
 
 			const processes = stdout.trim().split('\n');
-			
+
 			for (const process of processes) {
 				const fields = process.trim().split(/\s+/);
 				if (fields.length >= 4 && fields[2] && fields[3]) {
 					const cpuUsage = parseFloat(fields[2]);
 					const elapsedTime = fields[3];
-					
+
 					// Consider active if:
 					// 1. CPU usage > 0.1% (actively processing)
 					// 2. Or recently started (less than 30 seconds old and CPU > 0)
 					if (cpuUsage > 0.1) {
 						return true;
 					}
-					
+
 					// Check if recently started and has some CPU usage
 					if (cpuUsage > 0 && this.isRecentlyStarted(elapsedTime)) {
 						return true;
 					}
 				}
 			}
-			
+
 			// If processes exist but no significant CPU usage, check if waiting for input
 			return this.isWaitingForInput(commandType);
-		} catch (error) {
+		} catch (_error) {
 			// Fallback to simpler process check
 			return this.isProcessRunning(commandType);
 		}
@@ -281,14 +286,18 @@ export class ZellijService {
 			const parts = elapsedTime.split('-');
 			const timePart = parts[parts.length - 1];
 			if (!timePart) return false;
-			
+
 			const timeComponents = timePart.split(':');
-			
-			if (timeComponents.length >= 2 && timeComponents[0] && timeComponents[1]) {
+
+			if (
+				timeComponents.length >= 2 &&
+				timeComponents[0] &&
+				timeComponents[1]
+			) {
 				const minutes = parseInt(timeComponents[0]);
 				const seconds = parseInt(timeComponents[1]);
 				const totalSeconds = minutes * 60 + seconds;
-				
+
 				return totalSeconds < 30; // Recently started if less than 30 seconds
 			}
 		} catch {
@@ -300,12 +309,16 @@ export class ZellijService {
 	/**
 	 * Check if the command is waiting for input (more sophisticated check)
 	 */
-	private static async isWaitingForInput(commandType: 'claude' | 'codex'): Promise<boolean> {
+	private static async isWaitingForInput(
+		commandType: 'claude' | 'codex',
+	): Promise<boolean> {
 		try {
 			// Use lsof to check if the process has open stdin/stdout
-			const {stdout} = await execAsync(`lsof -c ${commandType} 2>/dev/null | grep -E "(stdin|stdout|pts)" | wc -l`);
+			const {stdout} = await execAsync(
+				`lsof -c ${commandType} 2>/dev/null | grep -E "(stdin|stdout|pts)" | wc -l`,
+			);
 			const openFiles = parseInt(stdout.trim());
-			
+
 			// If process has open terminal files, it's likely waiting for input
 			return openFiles > 0;
 		} catch {
@@ -316,10 +329,17 @@ export class ZellijService {
 	/**
 	 * Check if process is running
 	 */
-	static async isProcessRunning(commandType: 'claude' | 'codex'): Promise<boolean> {
+	static async isProcessRunning(
+		commandType: 'claude' | 'codex',
+	): Promise<boolean> {
 		try {
-			const {stdout} = await execAsync(`ps aux | grep -v grep | grep "${commandType}"`);
-			const processes = stdout.trim().split('\n').filter(line => line.length > 0);
+			const {stdout} = await execAsync(
+				`ps aux | grep -v grep | grep "${commandType}"`,
+			);
+			const processes = stdout
+				.trim()
+				.split('\n')
+				.filter(line => line.length > 0);
 			return processes.length > 0;
 		} catch {
 			return false;
@@ -334,5 +354,177 @@ export class ZellijService {
 		const parts = worktreePath.split('/');
 		const lastPart = parts[parts.length - 1];
 		return (lastPart || 'unknown').replace(/[^a-zA-Z0-9-_]/g, '-');
+	}
+
+	/**
+	 * Get all existing Zellij panes with their details
+	 */
+	static async getExistingPanes(): Promise<
+		Array<{
+			name: string;
+			id: string;
+			cwd: string;
+			command: string;
+			commandType?: 'claude' | 'codex';
+		}>
+	> {
+		if (!this.isInsideZellij()) {
+			return [];
+		}
+
+		try {
+			// Get pane information using zellij action dump-layout
+			const {stdout} = await execAsync('zellij action dump-layout');
+			const panes = [];
+
+			// Parse the layout output to extract pane information
+			const lines = stdout.split('\n');
+			let currentCwd = '';
+
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i]?.trim();
+				if (!line) continue;
+
+				// Extract current working directory from cwd lines
+				if (line.startsWith('cwd ')) {
+					const cwdMatch = line.match(/cwd "([^"]+)"/);
+					if (cwdMatch && cwdMatch[1]) {
+						currentCwd = cwdMatch[1];
+					}
+				}
+
+				// Look for pane definitions with commands
+				if (line.startsWith('pane command=')) {
+					const commandMatch = line.match(/pane command="([^"]+)"/);
+					const cwdMatch = line.match(/cwd="([^"]+)"/);
+
+					if (commandMatch && commandMatch[1]) {
+						const command = commandMatch[1];
+						let cwd = (cwdMatch && cwdMatch[1]) ? cwdMatch[1] : currentCwd;
+						
+						// Convert relative paths to absolute paths
+						if (cwd && !cwd.startsWith('/')) {
+							cwd = resolve(currentCwd, cwd);
+						}
+
+						// Determine command type
+						let commandType: 'claude' | 'codex' | undefined;
+						if (command === 'claude') {
+							commandType = 'claude';
+						} else if (command === 'codex') {
+							commandType = 'codex';
+						}
+
+						if (commandType && cwd) {
+							// Generate a unique ID and name for this pane
+							const id: string = `pane-${panes.length + 1}`;
+							const name = this.getBranchNameFromPath(cwd);
+
+							panes.push({
+								name,
+								id,
+								cwd,
+								command,
+								commandType,
+							});
+						}
+					}
+				}
+			}
+
+			return panes;
+		} catch (error) {
+			console.error('Error getting existing panes:', error);
+			// Fallback: try to get panes using process information
+			return this.getExistingPanesFromProcesses();
+		}
+	}
+
+	/**
+	 * Fallback method to get existing panes from process information
+	 */
+	private static async getExistingPanesFromProcesses(): Promise<
+		Array<{
+			name: string;
+			id: string;
+			cwd: string;
+			command: string;
+			commandType?: 'claude' | 'codex';
+		}>
+	> {
+		try {
+			const panes = [];
+
+			// Get all claude/codex processes
+			const {stdout: claudeOutput} = await execAsync(
+				'ps -eo pid,ppid,cwd,args | grep -v grep | grep -E "(claude|codex)" || true',
+			);
+
+			if (claudeOutput.trim()) {
+				const processes = claudeOutput.trim().split('\n');
+
+				for (const process of processes) {
+					const fields = process.trim().split(/\s+/);
+					if (fields.length >= 4) {
+						const [pid, , cwd, ...argsParts] = fields;
+						const args = argsParts.join(' ');
+
+						let commandType: 'claude' | 'codex' | undefined;
+						if (args.includes('claude')) {
+							commandType = 'claude';
+						} else if (args.includes('codex')) {
+							commandType = 'codex';
+						}
+
+						if (commandType && cwd && pid) {
+							// Generate a name based on the working directory
+							const name = this.getBranchNameFromPath(cwd);
+
+							panes.push({
+								name,
+								id: pid,
+								cwd,
+								command: args,
+								commandType,
+							});
+						}
+					}
+				}
+			}
+
+			return panes;
+		} catch (error) {
+			console.error('Error getting panes from processes:', error);
+			return [];
+		}
+	}
+
+	/**
+	 * Check if a pane with the given working directory already exists
+	 */
+	static async hasPaneForWorktree(worktreePath: string): Promise<{
+		exists: boolean;
+		pane?: {
+			name: string;
+			id: string;
+			cwd: string;
+			command: string;
+			commandType?: 'claude' | 'codex';
+		};
+	}> {
+		const existingPanes = await this.getExistingPanes();
+
+		// Find pane with matching working directory
+		const matchingPane = existingPanes.find(pane => {
+			// Normalize paths for comparison
+			const paneAbsPath = resolve(pane.cwd);
+			const worktreeAbsPath = resolve(worktreePath);
+			return paneAbsPath === worktreeAbsPath;
+		});
+
+		return {
+			exists: !!matchingPane,
+			pane: matchingPane,
+		};
 	}
 }

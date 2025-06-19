@@ -75,7 +75,7 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 	constructor() {
 		super();
 		this.sessions = new Map();
-		
+
 		// Start Zellij status monitoring if we're inside Zellij
 		if (ZellijService.isInsideZellij()) {
 			this.startZellijStatusMonitoring();
@@ -125,7 +125,7 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 				write: () => {},
 			};
 			terminal = {
-				buffer: { active: { length: 0, getLine: () => null } },
+				buffer: {active: {length: 0, getLine: () => null}},
 				write: () => {},
 			};
 		} else {
@@ -323,13 +323,20 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 	 */
 	private startZellijStatusMonitoring(): void {
 		const updateZellijSessionStates = async () => {
-			const zellijSessions = Array.from(this.sessions.values()).filter(s => s.isZellijSession);
-			
+			const zellijSessions = Array.from(this.sessions.values()).filter(
+				s => s.isZellijSession,
+			);
+
 			for (const session of zellijSessions) {
 				try {
-					const paneName = ZellijService.getBranchNameFromPath(session.worktreePath);
-					const isActive = await ZellijService.isPaneActive(paneName, session.commandType);
-					
+					const paneName = ZellijService.getBranchNameFromPath(
+						session.worktreePath,
+					);
+					const isActive = await ZellijService.isPaneActive(
+						paneName,
+						session.commandType,
+					);
+
 					// More nuanced state detection
 					let newState: SessionState;
 					if (isActive) {
@@ -338,18 +345,20 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 						newState = 'busy';
 					} else {
 						// Check if process exists but is idle
-						const processExists = await ZellijService.isProcessRunning(session.commandType);
+						const processExists = await ZellijService.isProcessRunning(
+							session.commandType,
+						);
 						newState = processExists ? 'idle' : 'idle'; // Process ended
 					}
-					
+
 					if (session.state !== newState) {
 						const oldState = session.state;
 						session.state = newState;
 						session.lastActivity = new Date();
-						
+
 						// Execute status hooks
 						this.executeStatusHook(oldState, newState, session);
-						
+
 						// Emit state change event
 						this.emit('sessionStateChanged', session);
 					}
@@ -361,7 +370,7 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 
 		// Check every 2 seconds
 		this.zellijStatusTimer = setInterval(updateZellijSessionStates, 2000);
-		
+
 		// Initial check
 		updateZellijSessionStates();
 	}
@@ -376,10 +385,106 @@ export class SessionManager extends EventEmitter implements ISessionManager {
 		}
 	}
 
+	/**
+	 * Discover and restore existing sessions from Zellij panes
+	 */
+	async discoverExistingSessions(): Promise<Session[]> {
+		if (!ZellijService.isInsideZellij()) {
+			return [];
+		}
+
+		const discoveredSessions: Session[] = [];
+
+		try {
+			const existingPanes = await ZellijService.getExistingPanes();
+
+			for (const pane of existingPanes) {
+				// Skip if we already have a session for this worktree
+				if (this.sessions.has(pane.cwd)) {
+					continue;
+				}
+
+				// Create a new Zellij session for the existing pane
+				const session = this.createSession(
+					pane.cwd,
+					pane.commandType || 'claude',
+					true, // isZellijSession
+				);
+
+				// Set additional metadata from the discovered pane
+				session.id = `zellij-${pane.id}`;
+				session.lastActivity = new Date(); // Mark as recently active
+
+				discoveredSessions.push(session);
+
+				console.log(
+					`✅ Discovered existing ${pane.commandType} session in: ${pane.cwd}`,
+				);
+			}
+
+			// Start monitoring if we discovered any sessions
+			if (discoveredSessions.length > 0 && !this.zellijStatusTimer) {
+				this.startZellijStatusMonitoring();
+			}
+		} catch (error) {
+			console.error('Error discovering existing sessions:', error);
+		}
+
+		return discoveredSessions;
+	}
+
+	/**
+	 * Restore a specific session for a worktree if it exists in Zellij
+	 */
+	async restoreSessionForWorktree(
+		worktreePath: string,
+	): Promise<Session | null> {
+		if (!ZellijService.isInsideZellij()) {
+			return null;
+		}
+
+		// Check if session already exists
+		if (this.sessions.has(worktreePath)) {
+			return this.sessions.get(worktreePath) || null;
+		}
+
+		try {
+			const paneInfo = await ZellijService.hasPaneForWorktree(worktreePath);
+
+			if (paneInfo.exists && paneInfo.pane) {
+				// Create a Zellij session for the existing pane
+				const session = this.createSession(
+					worktreePath,
+					paneInfo.pane.commandType || 'claude',
+					true, // isZellijSession
+				);
+
+				// Set metadata from the discovered pane
+				session.id = `zellij-${paneInfo.pane.id}`;
+				session.lastActivity = new Date();
+
+				console.log(
+					`✅ Restored ${paneInfo.pane.commandType} session for: ${worktreePath}`,
+				);
+
+				// Start monitoring if not already started
+				if (!this.zellijStatusTimer) {
+					this.startZellijStatusMonitoring();
+				}
+
+				return session;
+			}
+		} catch (error) {
+			console.error(`Error restoring session for ${worktreePath}:`, error);
+		}
+
+		return null;
+	}
+
 	destroy(): void {
 		// Stop Zellij monitoring
 		this.stopZellijStatusMonitoring();
-		
+
 		// Clean up all sessions
 		for (const worktreePath of this.sessions.keys()) {
 			this.destroySession(worktreePath);

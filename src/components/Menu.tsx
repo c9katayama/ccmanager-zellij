@@ -74,8 +74,8 @@ const Menu: React.FC<MenuProps> = ({sessionManager, onSelectWorktree}) => {
 			let commandPrefix = '';
 
 			if (session) {
-				const statusDisplay = session.isZellijSession 
-					? `Zellij-${getStatusDisplay(session.state)}` 
+				const statusDisplay = session.isZellijSession
+					? `Zellij-${getStatusDisplay(session.state)}`
 					: getStatusDisplay(session.state);
 				status = ` [${statusDisplay}]`;
 				// Add command type prefix

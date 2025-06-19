@@ -62,8 +62,31 @@ const App: React.FC = () => {
 		// If no commands are available, show error view
 		if (availability.available.length === 0) {
 			setView('no-commands-available');
+			return;
 		}
-	}, []);
+
+		// Discover and restore existing sessions if inside Zellij
+		if (zellijAvailable && insideZellij) {
+			const discoverSessions = async () => {
+				try {
+					const discoveredSessions =
+						await sessionManager.discoverExistingSessions();
+					if (discoveredSessions.length > 0) {
+						console.log(
+							`✅ Discovered ${discoveredSessions.length} existing sessions`,
+						);
+						// Force refresh menu to show restored sessions
+						setMenuKey(prev => prev + 1);
+					}
+				} catch (error) {
+					console.error('Error discovering existing sessions:', error);
+				}
+			};
+
+			// Delay session discovery to allow UI to initialize
+			setTimeout(discoverSessions, 100);
+		}
+	}, [sessionManager]);
 
 	useEffect(() => {
 		// Listen for session exits to return to menu automatically
@@ -129,8 +152,28 @@ const App: React.FC = () => {
 			return;
 		}
 
-		// Get existing session or create new session based on command availability
+		// Get existing session or try to restore from Zellij, then create new session
 		let session = sessionManager.getSession(worktree.path);
+
+		// If no session exists and we're in Zellij, try to restore from existing pane
+		if (!session && isZellijAvailable && isInsideZellij) {
+			try {
+				const restoredSession = await sessionManager.restoreSessionForWorktree(
+					worktree.path,
+				);
+				if (restoredSession) {
+					session = restoredSession;
+				}
+				if (session) {
+					console.log(`✅ Restored existing session for: ${worktree.path}`);
+					// Force refresh menu to show restored session
+					setMenuKey(prev => prev + 1);
+					return; // Session restored, no need to create new one
+				}
+			} catch (error) {
+				console.error(`Error restoring session for ${worktree.path}:`, error);
+			}
+		}
 
 		if (!session) {
 			// No existing session, check command availability
@@ -157,7 +200,7 @@ const App: React.FC = () => {
 						if (zellijResult.success) {
 							// Create a placeholder session for status tracking
 							sessionManager.createSession(worktree.path, defaultCommand, true);
-							
+
 							console.log(
 								'Successfully created Zellij session for worktree:',
 								worktree.path,
@@ -273,8 +316,12 @@ const App: React.FC = () => {
 
 						if (zellijResult.success) {
 							// Create a placeholder session for status tracking
-							sessionManager.createSession(newWorktree.path, defaultCommand, true);
-							
+							sessionManager.createSession(
+								newWorktree.path,
+								defaultCommand,
+								true,
+							);
+
 							console.log(
 								'Successfully created Zellij session for new worktree:',
 								newWorktree.path,
@@ -406,7 +453,7 @@ const App: React.FC = () => {
 			if (zellijResult.success) {
 				// Create a placeholder session for status tracking
 				sessionManager.createSession(selectedWorktree.path, commandType, true);
-				
+
 				console.log(
 					'Successfully created Zellij session via command selection:',
 					selectedWorktree.path,
